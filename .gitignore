@@ -1,0 +1,22 @@
+# 설정 (API 키 포함)
+config.yaml
+
+# 로컬 절대경로 포함 (setup.sh가 자동 생성)
+claude_desktop_config.json
+
+# 데이터
+data/
+logs/
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# 모델 캐시
+.cache/

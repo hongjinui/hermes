@@ -1,0 +1,33 @@
+telegram:
+  api_id: "YOUR_API_ID"
+  api_hash: "YOUR_API_HASH"
+  phone: "YOUR_PHONE_NUMBER"
+
+anthropic:
+  api_key: "YOUR_ANTHROPIC_API_KEY"
+
+chatrooms:
+  - link: "https://t.me/example_channel_1"
+    type: "article"
+  - link: "https://t.me/example_channel_2"
+    type: "article"
+  - link: "https://t.me/+AbCdEfGhIjKlMnOp"   # 비공개방은 초대링크
+    type: "article"
+  - link: "https://t.me/example_group_1"
+    type: "conversation"
+  - link: "https://t.me/+XyZaBcDeFgHiJkLm"
+    type: "conversation"
+  - link: "https://t.me/example_group_2"
+    type: "conversation"
+
+settings:
+  chunk_size: 500
+  claude_model: "claude-sonnet-4-6"
+  summary_batch_size: 50
+  embed_batch_size: 100   # ChromaDB 임베딩 배치 크기 (GPU 메모리에 따라 조정)
+  crawl_timeout: 10       # URL 크롤링 타임아웃 (초)
+  crawl_concurrency: 10   # 동시 크롤링 수
+  max_crawl_fails: 3      # URL 크롤링 최대 실패 허용 횟수 (초과 시 영구 스킵)
+  max_collect_retries: 3  # 텔레그램 방 수집 실패 시 최대 재시도 횟수
+  data_dir: "data"
+  log_dir: "logs"

@@ -1,0 +1,7 @@
+telethon>=1.36
+chromadb>=0.5
+sentence-transformers>=3.0
+anthropic>=0.34
+newspaper3k>=0.2.8
+lxml[html_clean]>=5.0
+pyyaml>=6.0
