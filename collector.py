@@ -54,11 +54,11 @@ class TelegramCollector:
     async def disconnect(self):
         await self.client.disconnect()
 
-    async def collect_all(self) -> list[dict]:
-        """모든 채팅방에서 새 메시지 수집"""
+    async def collect_all(self, from_date=None, to_date=None) -> list[dict]:
+        """모든 채팅방에서 새 메시지 수집. from_date/to_date(date 객체)로 수집 범위 지정."""
         all_messages = []
         for room in self.config["chatrooms"]:
-            messages = await self.collect_room(room["link"], room["type"])
+            messages = await self.collect_room(room["link"], room["type"], from_date=from_date, to_date=to_date)
             all_messages.extend(messages)
 
             if messages:
@@ -76,17 +76,33 @@ class TelegramCollector:
                 logger.info(f"[{room['link']}] 수집: 0개")
         return all_messages
 
-    async def collect_room(self, room_link: str, room_type: str) -> list[dict]:
-        """단일 채팅방 메시지 수집 (마지막 동기화 이후).
+    async def collect_room(self, room_link: str, room_type: str, from_date=None, to_date=None) -> list[dict]:
+        """단일 채팅방 메시지 수집.
+        from_date/to_date(date 객체)로 수집 범위 지정 (min_id 필터 무시).
         실패 시 max_collect_retries 횟수만큼 재시도. 전부 실패하면 [] 반환 후 crawl_log 기록.
         """
-        last_id = self.db.get_last_message_id(room_link)
+        from datetime import datetime
+        today = datetime.now(KST).date()
+
+        if from_date is not None:
+            # 날짜 지정 모드: min_id 필터 없이 해당 날짜부터 재수집
+            collect_from = from_date
+            last_id = 0
+        else:
+            last_id = self.db.get_last_message_id(room_link)
+            # 마지막 동기화 날짜부터 수집 (없으면 오늘만)
+            last_sync_date = self.db.get_last_sync_date(room_link)
+            collect_from = last_sync_date if last_sync_date else today
+
+        collect_until = to_date if to_date is not None else today
+        collect_from_dt = datetime(collect_from.year, collect_from.month, collect_from.day, tzinfo=KST)
 
         for attempt in range(1, self.max_collect_retries + 1):
             messages = []
 
             try:
-                entity = await self.client.get_entity(room_link)
+                entity_input = int(room_link) if room_link.lstrip("-").isdigit() else room_link
+                entity = await self.client.get_entity(entity_input)
             except Exception as e:
                 logger.warning(f"채팅방 접근 실패 [{room_link}] ({attempt}/{self.max_collect_retries}): {e}")
                 if attempt < self.max_collect_retries:
@@ -100,10 +116,15 @@ class TelegramCollector:
 
             try:
                 async for msg in self.client.iter_messages(
-                    entity, min_id=last_id, reverse=True
+                    entity, min_id=last_id, reverse=True, offset_date=collect_from_dt
                 ):
                     if not isinstance(msg, Message) or not msg.text:
                         continue
+                    msg_date = msg.date.astimezone(KST).date()
+                    if msg_date < collect_from:
+                        continue
+                    if msg_date > collect_until:
+                        break
                     urls = self._extract_urls(msg)
                     messages.append({
                         "message_id": msg.id,

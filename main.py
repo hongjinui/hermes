@@ -2,10 +2,11 @@
 Hermes - 텔레그램 RAG 파이프라인 진입점
 하루 한 번 수동 실행으로 밀린 메시지를 수집·처리
 """
+import argparse
 import asyncio
 import logging
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 from pathlib import Path
 
 KST = timezone(timedelta(hours=9))
@@ -79,7 +80,7 @@ async def sync_chromadb(db: Database, embedder: Embedder, crawler: ArticleCrawle
             logger.info(f"ChromaDB 요약 재적재 완료")
 
 
-async def run_pipeline(config: dict):
+async def run_pipeline(config: dict, from_date: date | None = None, to_date: date | None = None):
     logger = logging.getLogger(__name__)
     settings = config.get("settings", {})
     data_dir = settings.get("data_dir", "data")
@@ -105,8 +106,11 @@ async def run_pipeline(config: dict):
     # ── 1. 텔레그램 메시지 수집 ──────────────────────────────────────────────
     collector = TelegramCollector(config, db)
     await collector.connect()
+    effective_to = to_date or datetime.now(KST).date()
+    if from_date:
+        logger.info(f"날짜 지정 수집 모드: {from_date} ~ {effective_to}")
     try:
-        all_messages = await collector.collect_all()
+        all_messages = await collector.collect_all(from_date=from_date, to_date=to_date)
     finally:
         await collector.disconnect()
 
@@ -290,10 +294,26 @@ async def run_pipeline(config: dict):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Hermes 텔레그램 RAG 파이프라인")
+    parser.add_argument(
+        "--date",
+        type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(),
+        metavar="YYYY-MM-DD",
+        help="이 날짜부터 수집 시작 (예: --date 2024-01-15). --to-date 없으면 오늘까지.",
+    )
+    parser.add_argument(
+        "--to-date",
+        type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(),
+        metavar="YYYY-MM-DD",
+        dest="to_date",
+        help="수집 종료 날짜 (포함). --date와 같은 날 지정하면 당일만 수집.",
+    )
+    args = parser.parse_args()
+
     config = load_config()
     settings = config.get("settings", {})
     setup_logging(settings.get("log_dir", "logs"))
-    asyncio.run(run_pipeline(config))
+    asyncio.run(run_pipeline(config, from_date=args.date, to_date=args.to_date))
 
 
 if __name__ == "__main__":

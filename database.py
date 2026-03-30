@@ -336,6 +336,22 @@ class Database:
             logger.error(f"last_message_id 조회 실패 [{room_link}]: {e}")
             return 0
 
+    def get_last_sync_date(self, room_link: str):
+        """마지막 동기화 날짜 반환 (date 객체). 없으면 None."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT last_sync_at FROM sync_state WHERE room_link = ?",
+                    (room_link,),
+                ).fetchone()
+            if row and row["last_sync_at"]:
+                from datetime import datetime
+                return datetime.fromisoformat(row["last_sync_at"]).date()
+            return None
+        except Exception as e:
+            logger.error(f"last_sync_at 조회 실패 [{room_link}]: {e}")
+            return None
+
     def update_last_message_id(self, room_link: str, room_title: str | None, message_id: int):
         try:
             with self._connect() as conn:

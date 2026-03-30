@@ -196,21 +196,22 @@ def handle_request(request: dict, embedder: Embedder, claude: anthropic.Anthropi
 
 
 def main():
+    _root = Path(__file__).parent
+    (_root / "logs").mkdir(exist_ok=True)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.FileHandler("logs/mcp_server.log")],
+        handlers=[logging.FileHandler(str(_root / "logs" / "mcp_server.log"))],
     )
 
-    config_path = Path(__file__).parent / "config.yaml"
+    config_path = _root / "config.yaml"
     with open(config_path) as f:
         config = yaml.safe_load(f)
 
     data_dir = config.get("settings", {}).get("data_dir", "data")
-    chroma_path = str(Path(__file__).parent / data_dir / "chroma_db")
-    db_path = str(Path(__file__).parent / data_dir / "telegram.db")
-
-    Path("logs").mkdir(exist_ok=True)
+    chroma_path = str(_root / data_dir / "chroma_db")
+    db_path = str(_root / data_dir / "telegram.db")
 
     embedder = Embedder(config, chroma_path)
     claude = anthropic.Anthropic(api_key=config["anthropic"]["api_key"])

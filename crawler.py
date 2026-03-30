@@ -20,8 +20,8 @@ class ArticleCrawler:
     def fetch(self, url: str) -> tuple[Optional[dict], Optional[str]]:
         """URL에서 기사 본문 추출. (article, error_message) 반환"""
         try:
-            article = Article(url, language="ko")
-            article.download(timeout=self.timeout)
+            article = Article(url, language="ko", request_timeout=self.timeout)
+            article.download()
             article.parse()
 
             if not article.text or len(article.text.strip()) < 100:
