@@ -10,12 +10,12 @@ from pathlib import Path
 import anthropic
 import yaml
 
+from database import Database
 from utils import extract_claude_text, first
 
 # 프로젝트 루트를 sys.path에 추가
 sys.path.insert(0, str(Path(__file__).parent))
 
-from database import Database
 from embedder import Embedder
 
 logger = logging.getLogger(__name__)
@@ -86,6 +86,29 @@ def answer_with_rag(
     return extract_claude_text(response)
 
 
+def tool_list_rooms(db: Database) -> str:
+    """sync_state에서 수집된 방 목록 반환"""
+    rooms = db.list_rooms()
+    if not rooms:
+        return "수집된 방이 없습니다."
+    lines = []
+    for r in rooms:
+        name = r.get("room_title") or r["room_link"]
+        lines.append(
+            f"{name} ({r['room_link']})  마지막 메시지: {r['last_message_id']}  동기화: {r.get('last_sync_at', '-')}"
+        )
+    return "\n".join(lines)
+
+
+def tool_get_summary(db: Database, room_link: str, date: str) -> str:
+    """특정 방+날짜의 요약 반환"""
+    row = db.get_summary(room_link, date)
+    if row is None:
+        return f"{room_link} / {date} 에 해당하는 요약이 없습니다."
+    name = row.get("room_title") or room_link
+    return f"[{name}] {row['date']}\n\n{row['summary']}"
+
+
 # ── MCP 핸들러 ────────────────────────────────────────────────────────────────
 
 
@@ -129,10 +152,31 @@ TOOLS = [
             "required": ["question"],
         },
     },
+    {
+        "name": "list_rooms",
+        "description": "수집된 텔레그램 방 목록과 마지막 동기화 정보를 반환",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "get_summary",
+        "description": "특정 방과 날짜의 대화 요약을 반환",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_link": {"type": "string", "description": "텔레그램 방 링크 (예: some_channel)"},
+                "date": {"type": "string", "description": "날짜 (YYYY-MM-DD 형식, 예: 2024-01-15)"},
+            },
+            "required": ["room_link", "date"],
+        },
+    },
 ]
 
 
-def handle_request(request: dict, embedder: Embedder, claude: anthropic.Anthropic, config: dict) -> dict:
+def handle_request(request: dict, embedder: Embedder, db: Database, claude: anthropic.Anthropic, config: dict) -> dict:
     method = request.get("method")
     req_id = request.get("id")
     model = config.get("settings", {}).get("claude_model", "claude-sonnet-4-6")
@@ -168,6 +212,10 @@ def handle_request(request: dict, embedder: Embedder, claude: anthropic.Anthropi
                 result = answer_with_rag(
                     embedder, claude, model, args["question"], args.get("collection", "all")
                 )
+            elif tool_name == "list_rooms":
+                result = tool_list_rooms(db)
+            elif tool_name == "get_summary":
+                result = tool_get_summary(db, args["room_link"], args["date"])
             else:
                 result = f"알 수 없는 도구: {tool_name}"
 
@@ -201,7 +249,7 @@ def main():
 
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         handlers=[logging.FileHandler(str(_root / "logs" / "mcp_server.log"))],
     )
 
@@ -214,6 +262,7 @@ def main():
     db_path = str(_root / data_dir / "telegram.db")
 
     embedder = Embedder(config, chroma_path)
+    db = Database(db_path)
     claude = anthropic.Anthropic(api_key=config["anthropic"]["api_key"])
 
     logger.info("Hermes MCP 서버 시작")
@@ -222,7 +271,7 @@ def main():
         request = read_request()
         if request is None:
             break
-        response = handle_request(request, embedder, claude, config)
+        response = handle_request(request, embedder, db, claude, config)
         if response is not None:
             send_response(response)
 

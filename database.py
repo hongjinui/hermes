@@ -51,6 +51,7 @@ class Database:
                     message_id INTEGER,
                     room_link TEXT,
                     room_title TEXT,
+                    source_type TEXT DEFAULT 'crawled',
                     created_at TEXT DEFAULT (datetime('now', '+9 hours'))
                 );
 
@@ -83,7 +84,17 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url);
                 CREATE INDEX IF NOT EXISTS idx_crawl_log_url ON crawl_log(url);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_room_date ON summaries(room_link, date);
             """)
+            # 마이그레이션: articles.source_type (기존 DB 호환)
+            existing = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(articles)").fetchall()
+            }
+            if "source_type" not in existing:
+                conn.execute(
+                    "ALTER TABLE articles ADD COLUMN source_type TEXT DEFAULT 'crawled'"
+                )
 
     # ── 메시지 ─────────────────────────────────────────────────────────────────
 
@@ -117,40 +128,20 @@ class Database:
             logger.error(f"메시지 일괄 저장 실패: {e}")
             return 0
 
-    def save_message(self, msg: dict) -> Optional[int]:
-        try:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    """INSERT OR IGNORE INTO messages
-                       (message_id, room_link, room_title, room_type, text, sender_id, timestamp, urls, is_forwarded)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        msg["message_id"],
-                        msg["room_link"],
-                        msg.get("room_title"),
-                        msg["room_type"],
-                        msg["text"],
-                        msg.get("sender_id"),
-                        msg["timestamp"],
-                        json.dumps(msg.get("urls", []), ensure_ascii=False),
-                        1 if msg.get("is_forwarded") else 0,
-                    ),
-                )
-                return cursor.lastrowid if cursor.rowcount else None
-        except Exception as e:
-            logger.error(f"메시지 저장 실패: {e}")
-            return None
-
     def get_unsummarized_chat_messages(self, room_link: str, date: str) -> list[dict]:
         """특정 날짜의 포워딩 아닌 유저 대화 메시지 중 아직 요약 안 된 것"""
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT * FROM messages
-                   WHERE room_link = ? AND timestamp LIKE ? AND is_forwarded = 0 AND summarized = 0
-                   ORDER BY timestamp""",
-                (room_link, f"{date}%"),
-            ).fetchall()
-        return [dict(r) for r in rows]
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """SELECT * FROM messages
+                       WHERE room_link = ? AND timestamp LIKE ? AND is_forwarded = 0 AND summarized = 0
+                       ORDER BY timestamp""",
+                    (room_link, f"{date}%"),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"미요약 메시지 조회 실패 [{room_link}] {date}: {e}")
+            return []
 
     def mark_messages_summarized(self, message_ids: list[int], room_link: str):
         """요약 완료된 메시지 표시"""
@@ -176,8 +167,8 @@ class Database:
             with self._connect() as conn:
                 cursor = conn.executemany(
                     """INSERT OR IGNORE INTO articles
-                       (url, title, text, authors, publish_date, message_id, room_link, room_title)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (url, title, text, authors, publish_date, message_id, room_link, room_title, source_type)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     [
                         (
                             a["url"],
@@ -188,6 +179,7 @@ class Database:
                             a.get("message_id"),
                             a.get("room_link"),
                             a.get("room_title"),
+                            a.get("source_type", "crawled"),
                         )
                         for a in articles
                     ],
@@ -210,29 +202,6 @@ class Database:
                 )
         except Exception as e:
             logger.error(f"crawl_log 일괄 저장 실패: {e}")
-
-    def save_article(self, article: dict) -> Optional[int]:
-        try:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    """INSERT OR IGNORE INTO articles
-                       (url, title, text, authors, publish_date, message_id, room_link, room_title)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        article["url"],
-                        article.get("title", ""),
-                        article["text"],
-                        json.dumps(article.get("authors", []), ensure_ascii=False),
-                        article.get("publish_date"),
-                        article.get("message_id"),
-                        article.get("room_link"),
-                        article.get("room_title"),
-                    ),
-                )
-                return cursor.lastrowid if cursor.rowcount else None
-        except Exception as e:
-            logger.error(f"기사 저장 실패: {e}")
-            return None
 
     def save_crawl_log(self, url: str, success: bool, error_message: Optional[str] = None):
         try:
@@ -352,6 +321,34 @@ class Database:
             logger.error(f"last_sync_at 조회 실패 [{room_link}]: {e}")
             return None
 
+    def list_rooms(self) -> list[dict]:
+        """sync_state 전체 반환 (room_link, room_title, last_message_id, last_sync_at)"""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT room_link, room_title, last_message_id, last_sync_at FROM sync_state ORDER BY room_link"
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"list_rooms 조회 실패: {e}")
+            return []
+
+    def get_summary(self, room_link: str, date: str) -> dict | None:
+        """특정 방+날짜의 최신 요약 1건 반환"""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """SELECT room_link, room_title, summary, date, created_at
+                       FROM summaries
+                       WHERE room_link = ? AND date = ?
+                       ORDER BY id DESC LIMIT 1""",
+                    (room_link, date),
+                ).fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"get_summary 조회 실패 [{room_link}] {date}: {e}")
+            return None
+
     def update_last_message_id(self, room_link: str, room_title: str | None, message_id: int):
         try:
             with self._connect() as conn:
@@ -360,7 +357,7 @@ class Database:
                        VALUES (?, ?, ?, datetime('now', '+9 hours'))
                        ON CONFLICT(room_link) DO UPDATE SET
                            room_title = excluded.room_title,
-                           last_message_id = excluded.last_message_id,
+                           last_message_id = MAX(last_message_id, excluded.last_message_id),
                            last_sync_at = excluded.last_sync_at""",
                     (room_link, room_title, message_id),
                 )

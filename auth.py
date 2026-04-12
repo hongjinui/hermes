@@ -1,10 +1,12 @@
 """텔레그램 최초 인증 스크립트 - 한 번만 실행하면 됩니다."""
 import asyncio
+from pathlib import Path
 import yaml
 from telethon import TelegramClient
 
 async def main():
-    with open("config.yaml") as f:
+    _config_path = Path(__file__).parent / "config.yaml"
+    with open(_config_path) as f:
         cfg = yaml.safe_load(f)
     tg = cfg["telegram"]
     client = TelegramClient("hermes", int(tg["api_id"]), tg["api_hash"])

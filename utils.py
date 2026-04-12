@@ -1,7 +1,10 @@
 """
 공통 유틸리티 함수
 """
+from datetime import timezone, timedelta
 from typing import TypeVar
+
+KST = timezone(timedelta(hours=9))
 
 T = TypeVar("T")
 

@@ -1,5 +1,6 @@
 """채팅방 ID 조회 스크립트 (일회용)"""
 import asyncio
+from pathlib import Path
 import yaml
 from telethon import TelegramClient
 
@@ -16,7 +17,8 @@ TARGET_ROOMS = [
 ]
 
 async def main():
-    with open("config.yaml") as f:
+    _config_path = Path(__file__).parent / "config.yaml"
+    with open(_config_path) as f:
         cfg = yaml.safe_load(f)
 
     tg = cfg["telegram"]

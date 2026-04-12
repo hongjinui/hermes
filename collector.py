@@ -4,12 +4,12 @@
 """
 import asyncio
 import logging
-from datetime import timezone, timedelta
-
-KST = timezone(timedelta(hours=9))
+from datetime import datetime
 
 from telethon import TelegramClient
 from telethon.tl.types import Message, MessageEntityUrl, MessageEntityTextUrl
+
+from utils import KST
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,6 @@ class TelegramCollector:
         from_date/to_date(date 객체)로 수집 범위 지정 (min_id 필터 무시).
         실패 시 max_collect_retries 횟수만큼 재시도. 전부 실패하면 [] 반환 후 crawl_log 기록.
         """
-        from datetime import datetime
         today = datetime.now(KST).date()
 
         if from_date is not None:
@@ -163,19 +162,32 @@ class TelegramCollector:
         )
 
     def _extract_urls(self, msg: Message) -> list[str]:
-        """메시지에서 URL 추출. 스킵 대상(레이블, 도메인, 확장자)은 제외."""
+        """메시지에서 URL 추출. 스킵 대상(레이블, 도메인, 확장자)은 제외.
+
+        MessageEntityUrl: 메시지 텍스트에 raw URL이 그대로 있는 경우.
+                          offset/length로 텍스트를 슬라이싱해 URL을 얻는다.
+                          슬라이싱 결과가 http(s)://로 시작하지 않으면 garbage로 간주해 버린다.
+        MessageEntityTextUrl: [label](url) 마크다운 처리된 경우.
+                              entity.url에 실제 URL이 있고, offset/length는 display text 범위.
+                              텍스트를 슬라이싱하면 label(garbage)이 나오므로 반드시 entity.url 사용.
+        """
         urls = []
         if not msg.entities:
             return urls
 
         for entity in msg.entities:
             if isinstance(entity, MessageEntityUrl):
-                prefix = msg.text[max(0, entity.offset - 20) : entity.offset]
                 url = msg.text[entity.offset : entity.offset + entity.length]
+                # 슬라이싱 결과가 유효한 URL이 아니면 garbage (마크다운 잔재 등)
+                if not url.startswith(("http://", "https://")):
+                    logger.debug(f"MessageEntityUrl garbage 스킵: {url!r}")
+                    continue
+                prefix = msg.text[max(0, entity.offset - 20) : entity.offset]
                 if self._should_skip_url(url, prefix=prefix):
                     continue
                 urls.append(url)
             elif isinstance(entity, MessageEntityTextUrl):
+                # entity.url이 실제 링크. offset/length는 display text(label) 범위
                 display = msg.text[entity.offset : entity.offset + entity.length]
                 if self._should_skip_url(entity.url, display=display):
                     continue
