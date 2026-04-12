@@ -15,10 +15,9 @@ from collector import TelegramCollector
 from crawler import ArticleCrawler
 from database import Database
 from embedder import Embedder
-from summarizer import Summarizer
 from utils import KST
 
-VALID_STEPS = {"collect", "crawl", "embed", "summarize"}
+VALID_STEPS = {"collect", "crawl", "embed"}
 
 
 def setup_logging(log_dir: str):
@@ -85,7 +84,6 @@ async def run_pipeline(
     config: dict,
     from_date: date | None = None,
     to_date: date | None = None,
-    skip_summary: bool = False,
     only: str | None = None,
 ):
     logger = logging.getLogger(__name__)
@@ -104,12 +102,10 @@ async def run_pipeline(
     )
     max_crawl_fails = settings.get("max_crawl_fails", 3)
     embed_batch_size = settings.get("embed_batch_size", 100)
-    summarizer = Summarizer(config)
 
     run_collect = only in (None, "collect")
     run_crawl = only in (None, "crawl")
     run_embed = only in (None, "embed")
-    run_summarize = only in (None, "summarize")
 
     # ── 0. ChromaDB ↔ SQLite 싱크 (--only 지정 시 스킵) ─────────────────────
     if only is None:
@@ -275,44 +271,12 @@ async def run_pipeline(
     elif run_crawl:
         logger.info("크롤링 단계: 수집된 메시지 없음 (스킵)")
 
-    # ── 6. 대화방 유저 대화 요약 (포워딩 아닌 메시지만) ─────────────────────
-    conv_rooms = {(m["room_link"], m.get("room_title")) for m in conv_msgs}
-    if not run_summarize or skip_summary:
-        if skip_summary:
-            logger.info("요약 단계 스킵 (--skip-summary)")
-        conv_rooms = set()
-
-    summary_from = from_date or datetime.now(KST).date()
-    summary_to = to_date or datetime.now(KST).date()
-    summary_dates = []
-    cur = summary_from
-    while cur <= summary_to:
-        summary_dates.append(cur.isoformat())
-        cur += timedelta(days=1)
-
-    for room_link, room_title in conv_rooms:
-        for target_date in summary_dates:
-            chat_msgs = db.get_unsummarized_chat_messages(room_link, target_date)
-            if not chat_msgs:
-                continue
-            logger.info(f"[{room_title or room_link}] {target_date} {len(chat_msgs)}개 대화 요약 중...")
-            summary, summarized_ids = summarizer.summarize(room_link, chat_msgs, target_date)
-            if summary and summarized_ids:
-                db.save_summary(room_link, room_title, summary, summarized_ids, target_date)
-                db.mark_messages_summarized(summarized_ids, room_link)
-                embedder.add_summary(room_link, summary, target_date)
-                failed_count = len(chat_msgs) - len(summarized_ids)
-                if failed_count:
-                    logger.warning(f"[{room_link}] {target_date} {failed_count}개 배치 요약 실패 → 다음 실행에서 재시도")
-                logger.info(f"[{room_link}] {target_date} 요약 완료 ({len(summarized_ids)}/{len(chat_msgs)}개 메시지)")
-
     # ── 최종 요약 리포트 ─────────────────────────────────────────────────────
     logger.info("=" * 60)
     logger.info(f"[파이프라인 완료] {today}" + (f" (--only {only})" if only else ""))
     logger.info(f"  메시지 수집   : 총 {len(all_messages)}개 (신규 {new_msg_count}개 / 중복 {dup_msg_count}개)")
     logger.info(f"  URL 크롤링    : 성공 {crawled}개 / 실패 {failed}개 / 스킵 {skipped}개")
     logger.info(f"  텍스트 청킹   : 기사방 {len(text_articles)}개 / 대화방 스크랩 {len(fwd_articles)}개")
-    logger.info(f"  대화 요약     : {len(conv_rooms)}개 방")
     logger.info("=" * 60)
 
 
@@ -343,16 +307,10 @@ def main():
         help="수집 종료 날짜 (포함). --date와 같은 날 지정하면 당일만 수집.",
     )
     parser.add_argument(
-        "--skip-summary",
-        action="store_true",
-        dest="skip_summary",
-        help="요약 단계 건너뛰기 (Anthropic API 호출 안함)",
-    )
-    parser.add_argument(
         "--only",
         choices=sorted(VALID_STEPS),
         metavar="STEP",
-        help="단일 단계만 실행. STEP: collect / crawl / embed / summarize",
+        help="단일 단계만 실행. STEP: collect / crawl / embed",
     )
     args = parser.parse_args()
 
@@ -364,7 +322,6 @@ def main():
             config,
             from_date=args.date,
             to_date=args.to_date,
-            skip_summary=args.skip_summary,
             only=args.only,
         )
     )

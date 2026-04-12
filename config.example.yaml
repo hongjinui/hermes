@@ -3,9 +3,6 @@ telegram:
   api_hash: "YOUR_API_HASH"
   phone: "YOUR_PHONE_NUMBER"
 
-anthropic:
-  api_key: "YOUR_ANTHROPIC_API_KEY"
-
 chatrooms:
   - link: "https://t.me/example_channel_1"
     type: "article"
@@ -22,8 +19,6 @@ chatrooms:
 
 settings:
   chunk_size: 500
-  claude_model: "claude-sonnet-4-6"
-  summary_batch_size: 50
   embed_batch_size: 100   # ChromaDB 임베딩 배치 크기 (GPU 메모리에 따라 조정)
   # device: "mps"          # 임베딩 device 강제 지정. 생략 시 cuda > mps > cpu 자동 감지
   crawl_timeout: 10       # URL 크롤링 타임아웃 (초)
